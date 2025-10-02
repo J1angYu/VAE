@@ -1,0 +1,13 @@
+{
+    "exp_name": "mlp_mc_vae_mnist",
+    "data_path": "./data",
+    "input_dim": 784,
+    "hidden_dim": 400,
+    "z_dim": 16,
+    "batch_size": 128,
+    "lr": 0.001,
+    "epochs": 10,
+    "model": "mlp",
+    "kld_type": "mc",
+    "seed": 42
+}

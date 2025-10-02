@@ -1,0 +1,14 @@
+Start training MLP_VAE with mc KLD...
+Epoch 1/10 - Loss: 177.2103, Recon: 170.1242, KLD: 7.0861
+Epoch 2/10 - Loss: 128.2804, Recon: 114.3778, KLD: 13.9026
+Epoch 3/10 - Loss: 118.4385, Recon: 102.7503, KLD: 15.6882
+Epoch 4/10 - Loss: 113.4475, Recon: 96.6475, KLD: 16.8000
+Epoch 5/10 - Loss: 110.6120, Recon: 93.3487, KLD: 17.2633
+Epoch 6/10 - Loss: 108.7882, Recon: 91.2410, KLD: 17.5473
+Epoch 7/10 - Loss: 107.4682, Recon: 89.7157, KLD: 17.7525
+Epoch 8/10 - Loss: 106.4721, Recon: 88.5506, KLD: 17.9215
+Epoch 9/10 - Loss: 105.6170, Recon: 87.5708, KLD: 18.0462
+Epoch 10/10 - Loss: 104.9237, Recon: 86.7722, KLD: 18.1515
+Finish training!
+结果已保存到 experiments/mlp_mc_vae_mnist_2025-10-03_02-26-43
+FID: 48.2652

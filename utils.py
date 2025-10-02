@@ -135,7 +135,12 @@ def compute_fid_for_vae(vae_model, test_loader, device: torch.device, input_dim:
 
             # 生成图像特征
             z = torch.randn(x_real.size(0), z_dim, device=device)
-            x_fake_flat = vae_model.decode(z)
+            
+            if hasattr(vae_model, 'max_stage'):
+                x_fake_flat = vae_model.decode(z, stage=vae_model.max_stage, alpha=1.0)
+            else:
+                x_fake_flat = vae_model.decode(z)
+                
             x_fake = x_fake_flat.view(-1, 1, side, side)
             x_f = _preprocess_for_inception(x_fake)
             ff = get_feats(x_f)
