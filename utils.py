@@ -38,7 +38,6 @@ def setup_experiment(args):
     os.makedirs(exp_dir, exist_ok=True)
     
     config = vars(args).copy()
-    config['device'] = str(args.device)
     with open(os.path.join(exp_dir, "config.json"), 'w') as f:
         json.dump(config, f, indent=4)
     
@@ -112,14 +111,13 @@ def _frechet_distance(mu1: torch.Tensor, cov1: torch.Tensor, mu2: torch.Tensor, 
     return float(fid)
 
 
-def compute_fid_for_vae(vae_model, test_loader, device: torch.device, input_dim: int, latent_dim: int, n_batches: int | None = None) -> float:
+def compute_fid_for_vae(vae_model, test_loader, device: torch.device, input_dim: int, z_dim: int) -> float:
     """对 VAE 的生成分布与真实测试集计算 FID。
     - vae_model: 训练好的 VAE（需含 decoder）
     - test_loader: 测试数据 DataLoader，提供真实图像 (B,1,H,W)
     - device: 设备
-    - input_dim: 输入维度（MNIST=784）
-    - latent_dim: 潜在维度
-    - n_batches: 限制参与计算的批次数（None 则使用全部）
+    - input_dim: 输入维度
+    - z_dim: 潜在维度
     """
     inception, get_feats = _get_inception_model(device)
     inception.eval()
@@ -130,15 +128,13 @@ def compute_fid_for_vae(vae_model, test_loader, device: torch.device, input_dim:
 
     with torch.no_grad():
         for b_idx, (x_real, _) in enumerate(test_loader):
-            if n_batches is not None and b_idx >= n_batches:
-                break
             # 真实图像特征
             x_r = _preprocess_for_inception(x_real.to(device))
             fr = get_feats(x_r)
             real_feats_list.append(fr.cpu())
 
-            # 生成图像特征（与真实批大小一致）
-            z = torch.randn(x_real.size(0), latent_dim, device=device)
+            # 生成图像特征
+            z = torch.randn(x_real.size(0), z_dim, device=device)
             x_fake_flat = vae_model.decoder(z)
             x_fake = x_fake_flat.view(-1, 1, side, side)
             x_f = _preprocess_for_inception(x_fake)

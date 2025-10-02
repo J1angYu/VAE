@@ -2,16 +2,16 @@ import torch
 import torch.nn as nn
 
 class VAE(nn.Module):
-    def __init__(self, input_dim, hidden_dim, latent_dim):
+    def __init__(self, input_dim, hidden_dim, z_dim):
         super().__init__()
         self.encoder = nn.Sequential(
             nn.Linear(input_dim, hidden_dim), nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim), nn.ReLU()
         )
-        self.mu_layer = nn.Linear(hidden_dim, latent_dim)
-        self.logvar_layer = nn.Linear(hidden_dim, latent_dim)
+        self.mu_layer = nn.Linear(hidden_dim, z_dim)
+        self.logvar_layer = nn.Linear(hidden_dim, z_dim)
         self.decoder = nn.Sequential(
-            nn.Linear(latent_dim, hidden_dim), nn.ReLU(),
+            nn.Linear(z_dim, hidden_dim), nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
             nn.Linear(hidden_dim, input_dim), nn.Sigmoid()
         )
@@ -31,6 +31,6 @@ class VAE(nn.Module):
         return self.decoder(z), mu, logvar
 
 def vae_loss(x, x_recon, mu, logvar):
-    recon_loss = nn.functional.binary_cross_entropy(x_recon, x, reduction='sum')
-    kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    return recon_loss + kl_loss, recon_loss, kl_loss
+    BCE = nn.functional.binary_cross_entropy(x_recon, x, reduction='sum')
+    KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    return BCE + KLD, BCE, KLD
