@@ -113,7 +113,7 @@ def _frechet_distance(mu1: torch.Tensor, cov1: torch.Tensor, mu2: torch.Tensor, 
 
 def compute_fid_for_vae(vae_model, test_loader, device: torch.device, input_dim: int, z_dim: int) -> float:
     """对 VAE 的生成分布与真实测试集计算 FID。
-    - vae_model: 训练好的 VAE（需含 decoder）
+    - vae_model: 训练好的 VAE（需含 decode 方法）
     - test_loader: 测试数据 DataLoader，提供真实图像 (B,1,H,W)
     - device: 设备
     - input_dim: 输入维度
@@ -135,7 +135,7 @@ def compute_fid_for_vae(vae_model, test_loader, device: torch.device, input_dim:
 
             # 生成图像特征
             z = torch.randn(x_real.size(0), z_dim, device=device)
-            x_fake_flat = vae_model.decoder(z)
+            x_fake_flat = vae_model.decode(z)
             x_fake = x_fake_flat.view(-1, 1, side, side)
             x_f = _preprocess_for_inception(x_fake)
             ff = get_feats(x_f)

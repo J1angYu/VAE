@@ -1,3 +1,5 @@
+# ProVAE.py
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -47,60 +49,62 @@ class UpBlock(nn.Module):
 # Progressive Encoder (shared)
 # -----------------------------
 class ProgressiveEncoder(nn.Module):
-    """
-    stage 0 -> 4x4, stage 1 -> 8x8, ... resolution = 4 * 2**stage
-    通道安排保持简单，MNIST 到 32x32 足够。
-    fade-in 在输入端：新路径 (x -> 新块) 与旧路径 (downsample(x) -> 旧encoder) 线性混合。
-    """
     def __init__(self, in_ch=1, z_dim=32, base_ch=128, max_stage=3):
         super().__init__()
         self.in_ch = in_ch
         self.z_dim = z_dim
-        self.max_stage = max_stage  # 0..3 对应 4,8,16,32
-        # 每个 stage 的特征通道（简单起见固定）
-        ch = [base_ch, base_ch, base_ch, base_ch]
-        self.from_rgb = nn.ModuleList([nn.Conv2d(in_ch, ch[s], 1) for s in range(max_stage+1)])
-        self.blocks = nn.ModuleList([])  # 自 stage s 向下到 4x4 的下采样块
+        self.max_stage = max_stage
+        ch = [base_ch] * (max_stage + 1)
+        
+        self.from_rgb = nn.ModuleList([nn.Conv2d(in_ch, ch[s], 1) for s in range(max_stage + 1)])
+        self.blocks = nn.ModuleList([])
         for s in range(max_stage, 0, -1):
             self.blocks.append(DownBlock(ch[s], ch[s-1]))
-        # 4x4 顶部
+        
         self.final_conv = ConvBlock(ch[0], ch[0])
-        self.mu = nn.Linear(ch[0]*4*4, z_dim)
-        self.logvar = nn.Linear(ch[0]*4*4, z_dim)
+        self.mu = nn.Linear(ch[0] * 4 * 4, z_dim)
+        self.logvar = nn.Linear(ch[0] * 4 * 4, z_dim)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, a=0.2, nonlinearity='leaky_relu')
                 nn.init.zeros_(m.bias)
 
-    def forward(self, x, stage:int, alpha:float=1.0):
-        # x: B×1×R×R, stage∈[0, max_stage]
+    def forward(self, x, stage: int, alpha: float = 1.0):
         assert 0 <= stage <= self.max_stage
         
         if stage == 0:
-            # Stage 0: 直接处理 4x4 输入
             h = self.from_rgb[0](x)
         else:
-            # new path（当前分辨率）
+            # --- 修正点 1: 修复 Encoder 的 fade-in 逻辑 ---
+            # 旧路径 (低分辨率)
+            x_down = F.avg_pool2d(x, 2)
+            h_old = self.from_rgb[stage - 1](x_down)
+            
+            # 新路径 (高分辨率)
             h_new = self.from_rgb[stage](x)
             
-            # old path（先下采样一半，再走上一个 stage 的 from_rgb）
-            x_down = F.avg_pool2d(x, 2)
-            h_old = self.from_rgb[stage-1](x_down)
+            # 将新路径的特征图通过一个下采样块，使其分辨率与旧路径对齐
+            # block 的索引是从大 stage 到小 stage，所以 max_stage - stage 对应正确的块
+            # 例如 stage=3 (32x32), block_idx=0, 对应 ch[3]->ch[2] 的 DownBlock
+            block_idx = self.max_stage - stage
+            h_new_processed = self.blocks[block_idx](h_new)
             
-            # 混合两个路径 - 此时 h_new 和 h_old 分辨率不同，需要先让 h_new 下采样
-            # h_new 需要下采样到与 h_old 相同的分辨率
-            h_new_down = F.avg_pool2d(h_new, 2)
-            h = (1 - alpha) * h_old + alpha * h_new_down
-        
+            # 在低分辨率特征空间进行混合
+            h = (1 - alpha) * h_old + alpha * h_new_processed
+            # --- 修正结束 ---
+
         # 从混合后的特征继续下采样到 4x4
-        # 计算当前 h 的 stage（对于 stage > 0，h 现在相当于 stage-1 的分辨率）
-        current_stage = stage - 1 if stage > 0 else 0
+        # h 此时的分辨率等同于 stage-1 级别
+        current_effective_stage = stage - 1 if stage > 0 else 0
         
-        # 从当前分辨率下采样到 4x4
-        for i in range(current_stage, 0, -1):
-            idx = self.max_stage - i
-            h = self.blocks[idx](h)
+        # 从当前有效分辨率下采样到 4x4
+        # 例如 current_effective_stage=2 (16x16), 循环 s 将是 2, 1
+        for s in range(current_effective_stage, 0, -1):
+            # s=2 (16x16->8x8), block_idx=max-2
+            # s=1 (8x8->4x4), block_idx=max-1
+            block_idx = self.max_stage - s
+            h = self.blocks[block_idx](h)
         
         h = self.final_conv(h)
         h = h.view(h.size(0), -1)
@@ -112,22 +116,16 @@ class ProgressiveEncoder(nn.Module):
 # Progressive Decoder (Fade-in)
 # -----------------------------
 class ProgressiveDecoderFadeIn(nn.Module):
-    """
-    解码端渐进 + fade-in：
-      - old_rgb: 上一分辨率输出上采样到当前分辨率
-      - new_rgb: 通过新 UpBlock 后的 to_rgb
-      - 混合: (1 - alpha) * old_rgb + alpha * new_rgb
-    """
     def __init__(self, z_dim=32, out_ch=1, base_ch=128, max_stage=3):
         super().__init__()
         self.z_dim = z_dim
         self.max_stage = max_stage
-        ch = [base_ch, base_ch, base_ch, base_ch]  # 4->8->16->32
-        self.fc = nn.Linear(z_dim, ch[0]*4*4)
+        ch = [base_ch] * (max_stage + 1)
+        self.fc = nn.Linear(z_dim, ch[0] * 4 * 4)
         self.block_up = nn.ModuleList([])
         for s in range(0, max_stage):
             self.block_up.append(UpBlock(ch[s], ch[s+1]))
-        self.to_rgb = nn.ModuleList([nn.Conv2d(ch[s], out_ch, 1) for s in range(max_stage+1)])
+        self.to_rgb = nn.ModuleList([nn.Conv2d(ch[s], out_ch, 1) for s in range(max_stage + 1)])
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -136,47 +134,42 @@ class ProgressiveDecoderFadeIn(nn.Module):
             if isinstance(m, nn.Linear):
                 nn.init.xavier_uniform_(m.weight); nn.init.zeros_(m.bias)
 
-    def forward(self, z, stage:int, alpha:float=1.0):
+    def forward(self, z, stage: int, alpha: float = 1.0):
         assert 0 <= stage <= self.max_stage
         h = self.fc(z).view(z.size(0), -1, 4, 4)
+        
         if stage == 0:
-            return self.to_rgb[0](h)  # logits
+            return torch.sigmoid(self.to_rgb[0](h))
 
-        # 构造到上一层的特征
+        # 构造到上一层的特征 h_prev，但不包括最后一层 up_block
         h_prev = h
-        for s in range(0, stage):
-            if s == stage - 1:
-                break
+        for s in range(stage - 1):
             h_prev = self.block_up[s](h_prev)
-        rgb_prev = self.to_rgb[stage-1](h_prev)
+        
+        # 旧路径: 上一层的 RGB 输出，然后上采样
+        rgb_prev = self.to_rgb[stage - 1](h_prev)
         rgb_prev_up = F.interpolate(rgb_prev, scale_factor=2, mode='nearest')
 
-        # 当前层的新路径
-        h_cur = self.block_up[stage-1](h_prev)
+        # 新路径: 当前层的特征和 RGB 输出
+        h_cur = self.block_up[stage - 1](h_prev)
         rgb_cur = self.to_rgb[stage](h_cur)
 
-        return (1 - alpha) * rgb_prev_up + alpha * rgb_cur  # logits
+        return torch.sigmoid((1 - alpha) * rgb_prev_up + alpha * rgb_cur)
 
 # -----------------------------
 # Progressive Decoder (Residual)
 # -----------------------------
 class ProgressiveDecoderResidual(nn.Module):
-    """
-    拉普拉斯/残差式解码：
-      - stage 0 直接产出 4×4 的基础图像 logits
-      - 更高 stage：把上一分辨率图像上采样 ×2，再加上当前 stage 预测的 residual
-      - 最终得到当前分辨率的 logits
-    """
     def __init__(self, z_dim=32, out_ch=1, base_ch=128, max_stage=3):
         super().__init__()
         self.z_dim = z_dim
         self.max_stage = max_stage
-        ch = [base_ch, base_ch, base_ch, base_ch]
-        self.fc = nn.Linear(z_dim, ch[0]*4*4)
+        ch = [base_ch] * (max_stage + 1)
+        self.fc = nn.Linear(z_dim, ch[0] * 4 * 4)
         self.block_up = nn.ModuleList([])
         for s in range(0, max_stage):
             self.block_up.append(UpBlock(ch[s], ch[s+1]))
-        self.to_rgb = nn.ModuleList([nn.Conv2d(ch[s], out_ch, 1) for s in range(max_stage+1)])
+        self.to_rgb = nn.ModuleList([nn.Conv2d(ch[s], out_ch, 1) for s in range(max_stage + 1)])
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -185,18 +178,21 @@ class ProgressiveDecoderResidual(nn.Module):
             if isinstance(m, nn.Linear):
                 nn.init.xavier_uniform_(m.weight); nn.init.zeros_(m.bias)
 
-    def forward(self, z, stage:int):
+    def forward(self, z, stage: int):
         assert 0 <= stage <= self.max_stage
         h = self.fc(z).view(z.size(0), -1, 4, 4)
-        img_logits = self.to_rgb[0](h)   # base at 4x4
+        img = torch.sigmoid(self.to_rgb[0](h))
+        
         if stage == 0:
-            return img_logits
+            return img
+            
         h_cur = h
-        for s in range(0, stage):
+        for s in range(stage):
             h_cur = self.block_up[s](h_cur)
-            res_s = self.to_rgb[s+1](h_cur)  # residual at this scale
-            img_logits = F.interpolate(img_logits, scale_factor=2, mode='nearest') + res_s
-        return img_logits
+            res_s = self.to_rgb[s + 1](h_cur)
+            img = F.interpolate(img, scale_factor=2, mode='nearest') + torch.sigmoid(res_s)
+            
+        return img
 
 # -----------------------------
 # ProVAE (Fade-in) & Res-ProVAE
@@ -214,11 +210,11 @@ class ProVAE_FadeIn(nn.Module):
         self.decoder = ProgressiveDecoderFadeIn(z_dim=z_dim, out_ch=in_ch, base_ch=base_ch, max_stage=max_stage)
         self.reparam = Reparameterize()
 
-    def forward(self, x, stage:int, alpha:float):
+    def forward(self, x, stage: int, alpha: float):
         mu, logvar = self.encoder(x, stage, alpha)
         z = self.reparam(mu, logvar)
-        logits = self.decoder(z, stage, alpha)
-        return logits, mu, logvar
+        x_recon = self.decoder(z, stage, alpha)
+        return x_recon, mu, logvar
 
 class Res_ProVAE(nn.Module):
     def __init__(self, in_ch=1, z_dim=32, base_ch=128, max_stage=3):
@@ -227,18 +223,19 @@ class Res_ProVAE(nn.Module):
         self.decoder = ProgressiveDecoderResidual(z_dim=z_dim, out_ch=in_ch, base_ch=base_ch, max_stage=max_stage)
         self.reparam = Reparameterize()
 
-    def forward(self, x, stage:int, alpha:float=None):
-        # 编码端仍按当前 stage 处理；残差解码器不需要 alpha
-        mu, logvar = self.encoder(x, stage, alpha=1.0)
+    def forward(self, x, stage: int, alpha: float = 1.0):
+        # 编码端仍按当前 stage 处理；为保持接口一致性，alpha 强制为 1.0
+        # 残差解码器不需要 alpha
+        mu, logvar = self.encoder(x, stage, alpha=alpha)
         z = self.reparam(mu, logvar)
-        logits = self.decoder(z, stage)
-        return logits, mu, logvar
+        x_recon = self.decoder(z, stage)
+        return x_recon, mu, logvar
 
 # -----------------------------
 # Loss
 # -----------------------------
-def elbo_bce_logits(x, logits, mu, logvar):
-    # x: [0,1], logits: 任意实数
-    recon = F.binary_cross_entropy_with_logits(logits, x, reduction='sum')
-    kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    return recon + kl, recon, kl
+def vae_loss(x, x_recon, mu, logvar):
+    """VAE损失函数，与VAE模型保持一致的命名和形式"""
+    BCE = F.binary_cross_entropy(x_recon, x, reduction='sum')
+    KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    return BCE + KLD, BCE, KLD
