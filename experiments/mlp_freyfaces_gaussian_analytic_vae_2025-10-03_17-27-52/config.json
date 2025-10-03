@@ -1,0 +1,20 @@
+{
+    "exp_name": "mlp_freyfaces_gaussian_analytic_vae",
+    "data_path": "./data",
+    "dataset": "freyfaces",
+    "model": "mlp",
+    "input_dim": null,
+    "hidden_dim": 400,
+    "z_dim": 20,
+    "batch_size": 128,
+    "lr": 0.001,
+    "epochs": 20,
+    "seed": 42,
+    "recon": "gaussian",
+    "kl": "analytic",
+    "beta": 1.0,
+    "reduction": "sum",
+    "sigma": 1.0,
+    "sigma_learnable": true,
+    "include_const": false
+}

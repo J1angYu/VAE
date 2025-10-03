@@ -1,0 +1,24 @@
+开始训练 MLP_VAE，数据集: freyfaces
+Epoch 1/20 - Loss: 6.1556, Recon: 6.0616, KLD: 0.0939
+Epoch 2/20 - Loss: 3.5024, Recon: 3.4692, KLD: 0.0332
+Epoch 3/20 - Loss: 3.2317, Recon: 3.2246, KLD: 0.0071
+Epoch 4/20 - Loss: 3.1315, Recon: 3.1191, KLD: 0.0124
+Epoch 5/20 - Loss: 3.0373, Recon: 3.0316, KLD: 0.0057
+Epoch 6/20 - Loss: 2.9668, Recon: 2.9594, KLD: 0.0074
+Epoch 7/20 - Loss: 2.8875, Recon: 2.8860, KLD: 0.0016
+Epoch 8/20 - Loss: 2.8248, Recon: 2.8192, KLD: 0.0055
+Epoch 9/20 - Loss: 2.7572, Recon: 2.7525, KLD: 0.0047
+Epoch 10/20 - Loss: 2.6883, Recon: 2.6875, KLD: 0.0008
+Epoch 11/20 - Loss: 2.6382, Recon: 2.6328, KLD: 0.0054
+Epoch 12/20 - Loss: 2.5617, Recon: 2.5618, KLD: -0.0001
+Epoch 13/20 - Loss: 2.5060, Recon: 2.5009, KLD: 0.0052
+Epoch 14/20 - Loss: 2.4546, Recon: 2.4493, KLD: 0.0053
+Epoch 15/20 - Loss: 2.4005, Recon: 2.3982, KLD: 0.0023
+Epoch 16/20 - Loss: 2.3422, Recon: 2.3387, KLD: 0.0035
+Epoch 17/20 - Loss: 2.2903, Recon: 2.2890, KLD: 0.0012
+Epoch 18/20 - Loss: 2.2419, Recon: 2.2395, KLD: 0.0024
+Epoch 19/20 - Loss: 2.1936, Recon: 2.1915, KLD: 0.0021
+Epoch 20/20 - Loss: 2.1481, Recon: 2.1470, KLD: 0.0011
+训练完成!
+FID: 172.6367
+结果已保存到 experiments/mlp_freyfaces_gaussian_mc_vae_2025-10-03_17-28-17

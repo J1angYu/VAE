@@ -7,6 +7,8 @@ from torchvision import models
 
 
 class Logger:
+    """日志记录器，同时输出到终端和文件"""
+    
     def __init__(self, log_file):
         self.terminal = sys.stdout
         self.log = open(log_file, 'w', encoding='utf-8')
@@ -32,122 +34,143 @@ class Logger:
         sys.stdout = getattr(self, '_prev_stdout', self.terminal)
         self.close()
 
+
 def setup_experiment(args):
+    """设置实验目录和配置文件"""
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     exp_dir = os.path.join("experiments", f"{args.exp_name}_{timestamp}")
     os.makedirs(exp_dir, exist_ok=True)
     
-    config = vars(args).copy()
+    # 保存配置
     with open(os.path.join(exp_dir, "config.json"), 'w') as f:
-        json.dump(config, f, indent=4)
+        json.dump(vars(args), f, indent=4)
     
     print(f"实验目录: {exp_dir}")
     return exp_dir
 
 
-# ---------------------------
-# FID 计算相关工具函数
-# ---------------------------
-
-def _preprocess_for_inception(x: torch.Tensor) -> torch.Tensor:
-    """将输入张量规范到 InceptionV3 所需的形状与分布。
-    输入 x: (B, C=1, H, W) 且像素范围 [0,1]
-    输出: (B, 3, 299, 299) 正则化后张量
-    """
+def _preprocess_for_inception(x):
+    """预处理图像用于InceptionV3特征提取"""
     if x.dtype != torch.float32:
         x = x.float()
+    
+    # 调整到299x299并转为3通道
     x = torch.nn.functional.interpolate(x, size=(299, 299), mode='bilinear', align_corners=False)
-    x = x.repeat(1, 3, 1, 1)  # 灰度转为 3 通道
+    x = x.repeat(1, 3, 1, 1)
+    
+    # ImageNet标准化
     mean = torch.tensor([0.485, 0.456, 0.406], device=x.device).view(1, 3, 1, 1)
     std = torch.tensor([0.229, 0.224, 0.225], device=x.device).view(1, 3, 1, 1)
-    x = (x - mean) / std
-    return x
+    return (x - mean) / std
 
 
-def _get_inception_model(device: torch.device):
-    """加载 InceptionV3 模型并返回模型与一个提取 pool3 特征的函数。"""
+def _get_inception_model(device):
+    """获取InceptionV3模型和特征提取函数"""
     model = models.inception_v3(weights=models.Inception_V3_Weights.IMAGENET1K_V1)
-    model.to(device)
-    model.eval()
+    model.to(device).eval()
 
-    def get_features(imgs: torch.Tensor) -> torch.Tensor:
-        feats = []
-        def hook(_m, _i, o):
-            feats.append(o)
-        h = model.avgpool.register_forward_hook(hook)
+    def extract_features(imgs):
+        features = []
+        def hook_fn(module, input, output):
+            features.append(output)
+        
+        handle = model.avgpool.register_forward_hook(hook_fn)
         with torch.no_grad():
-            _ = model(imgs)
-        h.remove()
-        f = feats[0]
-        return torch.flatten(f, start_dim=1)
+            model(imgs)
+        handle.remove()
+        
+        return torch.flatten(features[0], start_dim=1)
 
-    return model, get_features
+    return model, extract_features
 
 
-def _stats(feats: torch.Tensor):
-    """计算均值与协方差（无偏）。feats: (N, D)"""
-    mu = feats.mean(dim=0)
-    x = feats - mu
-    n = feats.shape[0]
-    cov = (x.T @ x) / (n - 1)
+def _compute_statistics(features):
+    """计算特征的均值和协方差矩阵"""
+    mu = features.mean(dim=0)
+    centered = features - mu
+    cov = (centered.T @ centered) / (features.shape[0] - 1)
     return mu, cov
 
 
-def _symmetric_matrix_sqrt(mat: torch.Tensor) -> torch.Tensor:
-    """对称(半正定)矩阵的平方根，使用特征分解实现。"""
-    eigvals, eigvecs = torch.linalg.eigh(mat)
-    eigvals = torch.clamp(eigvals, min=0)
-    sqrt_vals = torch.sqrt(eigvals)
-    return (eigvecs @ torch.diag(sqrt_vals) @ eigvecs.T)
+def _matrix_sqrt(matrix):
+    """计算对称矩阵的平方根"""
+    eigenvals, eigenvecs = torch.linalg.eigh(matrix)
+    eigenvals = torch.clamp(eigenvals, min=0)
+    sqrt_eigenvals = torch.sqrt(eigenvals)
+    return eigenvecs @ torch.diag(sqrt_eigenvals) @ eigenvecs.T
 
 
-def _frechet_distance(mu1: torch.Tensor, cov1: torch.Tensor, mu2: torch.Tensor, cov2: torch.Tensor) -> float:
-    """计算 Frechet 距离。"""
-    cov1_sqrt = _symmetric_matrix_sqrt(cov1)
-    mid = cov1_sqrt @ cov2 @ cov1_sqrt
-    mid_sqrt = _symmetric_matrix_sqrt(mid)
-    diff = (mu1 - mu2)
-    fid = diff.dot(diff).item() + torch.trace(cov1).item() + torch.trace(cov2).item() - 2.0 * torch.trace(mid_sqrt).item()
-    return float(fid)
+def _frechet_distance(mu1, cov1, mu2, cov2):
+    """计算Frechet距离"""
+    # 计算 (mu1 - mu2)^2
+    diff = mu1 - mu2
+    mean_diff = diff.dot(diff).item()
+    
+    # 计算 tr(cov1) + tr(cov2) - 2*tr(sqrt(cov1 @ cov2))
+    cov1_sqrt = _matrix_sqrt(cov1)
+    middle_term = _matrix_sqrt(cov1_sqrt @ cov2 @ cov1_sqrt)
+    
+    trace_sum = torch.trace(cov1).item() + torch.trace(cov2).item()
+    trace_sqrt = 2.0 * torch.trace(middle_term).item()
+    
+    return mean_diff + trace_sum - trace_sqrt
 
 
-def compute_fid_for_vae(vae_model, test_loader, device: torch.device, input_dim: int, z_dim: int) -> float:
-    """对 VAE 的生成分布与真实测试集计算 FID。
-    - vae_model: 训练好的 VAE（需含 decode 方法）
-    - test_loader: 测试数据 DataLoader，提供真实图像 (B,1,H,W)
-    - device: 设备
-    - input_dim: 输入维度
-    - z_dim: 潜在维度
-    """
-    inception, get_feats = _get_inception_model(device)
-    inception.eval()
+def compute_fid_for_vae(vae_model, test_loader, device, input_dim, z_dim, image_shape=None):
+    """计算VAE生成图像与真实图像的FID分数"""
+    inception_model, extract_features = _get_inception_model(device)
+    
+    # 确定图像形状
+    if image_shape is not None:
+        height, width = image_shape
+    else:
+        side = int(input_dim ** 0.5)
+        height, width = side, side
 
-    real_feats_list = []
-    fake_feats_list = []
-    side = int(input_dim ** 0.5)
+    real_features_list = []
+    fake_features_list = []
 
     with torch.no_grad():
-        for b_idx, (x_real, _) in enumerate(test_loader):
-            # 真实图像特征
-            x_r = _preprocess_for_inception(x_real.to(device))
-            fr = get_feats(x_r)
-            real_feats_list.append(fr.cpu())
+        for x_real, _ in test_loader:
+            batch_size = x_real.size(0)
+            
+            # 处理真实图像
+            if len(x_real.shape) == 4 and x_real.shape[1] == 1:
+                x_real_processed = x_real
+            elif len(x_real.shape) == 4:
+                x_real_processed = x_real.mean(dim=1, keepdim=True)
+            else:
+                x_real_processed = x_real.view(-1, 1, height, width)
+            
+            # 提取真实图像特征
+            x_real_prep = _preprocess_for_inception(x_real_processed.to(device))
+            real_feat = extract_features(x_real_prep)
+            real_features_list.append(real_feat.cpu())
 
-            # 生成图像特征
-            z = torch.randn(x_real.size(0), z_dim, device=device)
+            # 生成假图像
+            z = torch.randn(batch_size, z_dim, device=device)
             
             if hasattr(vae_model, 'max_stage'):
-                x_fake_flat = vae_model.decode(z, stage=vae_model.max_stage, alpha=1.0)
+                x_fake = vae_model.decode(z, stage=vae_model.max_stage, alpha=1.0)
             else:
-                x_fake_flat = vae_model.decode(z)
-                
-            x_fake = x_fake_flat.view(-1, 1, side, side)
-            x_f = _preprocess_for_inception(x_fake)
-            ff = get_feats(x_f)
-            fake_feats_list.append(ff.cpu())
+                x_fake = vae_model.decode(z)
+            
+            # 处理生成图像
+            if len(x_fake.shape) == 2:
+                x_fake = x_fake.view(-1, 1, height, width)
+            elif x_fake.shape[1] != 1:
+                x_fake = x_fake.mean(dim=1, keepdim=True)
+            
+            # 提取生成图像特征
+            x_fake_prep = _preprocess_for_inception(x_fake)
+            fake_feat = extract_features(x_fake_prep)
+            fake_features_list.append(fake_feat.cpu())
 
-    real_feats = torch.cat(real_feats_list, dim=0)
-    fake_feats = torch.cat(fake_feats_list, dim=0)
-    mu_r, cov_r = _stats(real_feats)
-    mu_f, cov_f = _stats(fake_feats)
-    return _frechet_distance(mu_r, cov_r, mu_f, cov_f)
+    # 计算统计量和FID
+    real_features = torch.cat(real_features_list, dim=0)
+    fake_features = torch.cat(fake_features_list, dim=0)
+    
+    mu_real, cov_real = _compute_statistics(real_features)
+    mu_fake, cov_fake = _compute_statistics(fake_features)
+    
+    return _frechet_distance(mu_real, cov_real, mu_fake, cov_fake)

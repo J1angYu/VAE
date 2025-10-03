@@ -249,9 +249,7 @@ class ResidualProgressiveVAE(nn.Module):
 
 
 # ------------------------------------------
-# 参考损失函数（Residual Progressive 训练）
-# - MNIST: s=0 用 BCE(X vs X'_0)，s>0 用 MSE( D_s vs ΔX_s )
-# - FreyFace: 所有 stage 都用 Gaussian/MSE
+# 损失函数（Residual Progressive 训练）
 # ------------------------------------------
 def residual_pvae_loss(
     x,
@@ -283,7 +281,7 @@ def residual_pvae_loss(
         x_s = F.interpolate(x, size=(res, res), mode="area")
 
         if s == 0:
-            # s=0：与基底图像直接做 BCE（MNIST 推荐）
+            # s=0：与基底图像直接做 BCE（MNIST）
             if dataset.lower() == "mnist":
                 # deltas[0] 即 X'_0（Sigmoid 输出）
                 bce = F.binary_cross_entropy(deltas[0], x_s, reduction=reduction)
@@ -315,7 +313,7 @@ def residual_pvae_loss(
 
 
 # -----------------------------
-# 简单自测（shape 测试）
+# shape 测试
 # -----------------------------
 if __name__ == "__main__":
     B = 4
@@ -324,7 +322,7 @@ if __name__ == "__main__":
                                    latent_dim=64, base_ch=64, min_ch=16)
 
     for stage in range(model.max_stage + 1):
-        alpha = 0.5  # 过渡期示意
+        alpha = 0.5
         recon, mus, logvars, extras = model(x, stage=stage, alpha=alpha)
         print(f"stage={stage}  recon:{tuple(recon.shape)}  "
               f"stages_mu={len(mus)}  deltas_0_shape={tuple(extras['deltas'][0].shape)}")

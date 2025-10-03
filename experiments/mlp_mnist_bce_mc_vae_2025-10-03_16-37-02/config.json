@@ -1,0 +1,20 @@
+{
+    "exp_name": "mlp_mnist_bce_mc_vae",
+    "data_path": "./data",
+    "dataset": "mnist",
+    "model": "mlp",
+    "input_dim": null,
+    "hidden_dim": 400,
+    "z_dim": 20,
+    "batch_size": 128,
+    "lr": 0.001,
+    "epochs": 10,
+    "seed": 42,
+    "recon": "bce",
+    "kl": "mc",
+    "beta": 1.0,
+    "reduction": "sum",
+    "sigma": 1.0,
+    "sigma_learnable": false,
+    "include_const": false
+}

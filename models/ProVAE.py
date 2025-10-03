@@ -148,3 +148,8 @@ class ProVAE(nn.Module):
         z = self.reparameterize(mu, logvar)
         x_recon = self.decode(z, stage=stage, alpha=alpha)
         return x_recon, mu, logvar
+
+def vae_bce_loss(x, x_recon, mu, logvar):
+    BCE = F.binary_cross_entropy(x_recon, x, reduction='sum')
+    KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    return BCE + KLD, BCE, KLD
