@@ -7,7 +7,9 @@ from torchvision.datasets import MNIST
 import os
 import argparse
 from utils import Logger, setup_experiment, compute_fid_for_vae
-from models.ProVAE import ProVAE, vae_loss
+from models.ProVAE import ProVAE
+from loss import vae_bce_loss
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Progressive VAE MNIST Training')
@@ -16,9 +18,9 @@ def parse_args():
     parser.add_argument('--z_dim', type=int, default=20, help='潜在维度')
     parser.add_argument('--batch_size', type=int, default=128, help='batch size')
     parser.add_argument('--lr', type=float, default=1e-3, help='学习率')
+    # progressive 相关
     parser.add_argument('--epochs_per_stage', type=int, default=10, help='每个stage训练的epoch数')
     parser.add_argument('--fadein_ratio', type=float, default=0.5, help='每stage中用于fade-in的比例(0~1)')
-    # progressive 相关
     parser.add_argument('--start_res', type=int, default=4, help='起始分辨率')
     parser.add_argument('--final_res', type=int, default=32, help='最终分辨率')
     parser.add_argument('--base_ch', type=int, default=128, help='最低分辨率通道数')
@@ -86,7 +88,7 @@ def main(args):
 
                     optimizer.zero_grad()
                     x_recon, mu, logvar = model(x, stage=stage, alpha=alpha)
-                    loss, recon_loss, kld_loss = vae_loss(x_tgt, x_recon, mu, logvar)
+                    loss, recon_loss, kld_loss = vae_bce_loss(x_tgt, x_recon, mu, logvar)
 
                     loss.backward()
                     optimizer.step()

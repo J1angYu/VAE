@@ -105,22 +105,15 @@ class ProVAE(nn.Module):
         h = self.enc_from_rgb[stage](F.interpolate(x, size=(cur_res, cur_res), mode="area"))
 
         if stage > 0:
-            # 新层（高分辨率）的路径
             h = self.enc_blocks[stage - 1](h)
-
-            # 旧层（低分辨率）的路径
-            low_res_in = F.interpolate(x, size=(self._res_of(stage - 1), self._res_of(stage - 1)), mode="area")
-            low_h = self.enc_from_rgb[stage - 1](low_res_in)
-            
-            # 将新旧两个路径的输出特征进行混合
+            low_res = self._res_of(stage - 1)
+            low_h = self.enc_from_rgb[stage - 1](F.interpolate(x, size=(low_res, low_res), mode="area"))
             h = alpha * h + (1.0 - alpha) * low_h
 
-        # 通过剩余的稳定层
-        for s in range(stage - 1, -1, -1):
-            if s == 0: # Base case
-                h = F.relu(self.enc_base(h), inplace=True)
-            else:
+            for s in range(stage - 1, 0, -1):
                 h = self.enc_blocks[s - 1](h)
+
+        h = F.relu(self.enc_base(h), inplace=True)
 
         h_flat = h.view(h.size(0), -1)
         mu = self.fc_mu(h_flat)
@@ -155,9 +148,3 @@ class ProVAE(nn.Module):
         z = self.reparameterize(mu, logvar)
         x_recon = self.decode(z, stage=stage, alpha=alpha)
         return x_recon, mu, logvar
-
-
-def vae_loss(x_target, x_recon, mu, logvar):
-    BCE = F.binary_cross_entropy(x_recon, x_target, reduction='sum')
-    KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    return BCE + KLD, BCE, KLD

@@ -6,8 +6,10 @@ from torchvision.datasets import MNIST
 import os
 import argparse
 from utils import Logger, setup_experiment, compute_fid_for_vae
-from models.VAE import VAE, vae_loss_analytical, vae_loss_mc
-from models.CNN_VAE import CNN_VAE, vae_loss_analytical as cnn_vae_loss_analytical, vae_loss_mc as cnn_vae_loss_mc
+from models.VAE import VAE
+from models.CNN_VAE import CNN_VAE
+from loss import vae_bce_loss, vae_gaussian_loss
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='VAE MNIST Training')
@@ -20,12 +22,10 @@ def parse_args():
     parser.add_argument('--lr', type=float, default=1e-3, help='学习率')
     parser.add_argument('--epochs', type=int, default=30, help='训练轮数')
     parser.add_argument('--model', type=str, default='mlp', choices=['mlp', 'cnn'], help='模型类型')
-    parser.add_argument('--kld_type', type=str, default='analytical', 
-                        choices=['analytical', 'mc'], help='KLD loss calculation type')
     parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
     
     args = parser.parse_args()
-    args.exp_name = f"{args.model}_{args.kld_type}_{args.exp_name}"
+    args.exp_name = f"{args.model}_{args.exp_name}"
     
     return args
 
@@ -51,17 +51,14 @@ def main(args):
         # 模型选择
         if args.model == "mlp":
             model = VAE(args.input_dim, args.hidden_dim, args.z_dim).to(device)
-            loss_analytical = vae_loss_analytical
-            loss_mc = vae_loss_mc
         else:
             model = CNN_VAE(args.z_dim).to(device)
-            loss_analytical = cnn_vae_loss_analytical 
-            loss_mc = cnn_vae_loss_mc
 
+        loss_fn = vae_bce_loss
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
         # 训练
-        print(f"Start training {args.model.upper()}_VAE with {args.kld_type} KLD...")
+        print(f"Start training {args.model.upper()}_VAE...")
         model.train()
         for epoch in range(args.epochs):
             total_loss = recon_loss_sum = kld_loss_sum = 0
@@ -73,13 +70,8 @@ def main(args):
                     x = x.to(device)
 
                 optimizer.zero_grad()
-
-                if args.kld_type == 'analytical':
-                    x_recon, mu, logvar, _ = model(x)
-                    loss, recon_loss, kld_loss = loss_analytical(x, x_recon, mu, logvar)
-                else: # 'mc'
-                    x_recon, mu, logvar, z = model(x)
-                    loss, recon_loss, kld_loss = loss_mc(x, x_recon, mu, logvar, z)
+                x_recon, mu, logvar = model(x)
+                loss, recon_loss, kld_loss = loss_fn(x, x_recon, mu, logvar)
 
                 total_loss += loss.item()
                 recon_loss_sum += recon_loss.item()
@@ -115,7 +107,7 @@ def main(args):
             else:
                 test_x = test_x[:32].to(device)
 
-            recon_x, _, _, _ = model(test_x)
+            recon_x, _, _ = model(test_x)
             comparison = torch.cat([
                 test_x.view(-1, 1, 28, 28),  # 原始图
                 torch.zeros(8, 1, 28, 28).to(device),   # 间隔

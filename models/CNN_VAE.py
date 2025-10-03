@@ -45,34 +45,10 @@ class CNN_VAE(nn.Module):
         mu, logvar = self.encode(x)
         z = self.reparameterize(mu, logvar)
         x_recon = self.decode(z)
-        return x_recon, mu, logvar, z
+        return x_recon, mu, logvar
 
 
-import math
-
-def log_density_gaussian(x, mu, logvar):
-    """
-    计算高斯分布在x点的对数概率密度。
-    """
-    norm_const = -0.5 * (math.log(2 * math.pi) + logvar)
-    dist_term = -0.5 * ((x - mu) ** 2) / torch.exp(logvar)
-    return norm_const + dist_term
-
-def vae_loss_mc(x, x_recon, mu, logvar, z):
-    BCE = F.binary_cross_entropy(x_recon, x, reduction='sum')
-    
-    # 计算 log p(z), p(z) 是 N(0, I)
-    log_p_z = log_density_gaussian(z, torch.zeros_like(mu), torch.zeros_like(logvar))
-    
-    # 计算 log q(z|x), q(z|x) 是 N(mu, logvar)
-    log_q_z_x = log_density_gaussian(z, mu, logvar)
-    
-    # KLD ≈ log q(z|x) - log p(z)
-    KLD = torch.sum(log_q_z_x - log_p_z)
-    
-    return BCE + KLD, BCE, KLD
-
-def vae_loss_analytical(x, x_recon, mu, logvar):
+def vae_loss(x, x_recon, mu, logvar):
     BCE = F.binary_cross_entropy(x_recon, x, reduction='sum')
     KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
     return BCE + KLD, BCE, KLD
