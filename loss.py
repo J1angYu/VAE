@@ -76,7 +76,7 @@ class VAELoss(nn.Module):
         self.include_const = include_const
         self.fixed_sigma = sigma
 
-        # 可学习的sigma参数
+        # 可学习的sigma
         if recon_type == "gaussian" and learnable_sigma:
             self.log_sigma = nn.Parameter(torch.tensor(math.log(sigma)))
         else:
